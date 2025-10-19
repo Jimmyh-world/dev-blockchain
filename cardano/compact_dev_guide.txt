@@ -1,0 +1,1552 @@
+# Compact Smart Contract Development Guide for Midnight
+
+**Created**: 2025-10-05
+**Version**: 1.0
+**Compact Version**: 0.2.0+ (August 2025)
+**Status**: VERIFIED - Based on official Midnight documentation and testnet-02
+**Target**: AI coding assistants and developers building privacy-preserving smart contracts
+
+---
+
+## Table of Contents
+
+1. [Introduction to Compact](#introduction-to-compact)
+2. [Core Language Concepts](#core-language-concepts)
+3. [Smart Contract Architecture](#smart-contract-architecture)
+4. [Type System and Data Structures](#type-system-and-data-structures)
+5. [Circuit Design Patterns](#circuit-design-patterns)
+6. [Privacy and ZK Proof Patterns](#privacy-and-zk-proof-patterns)
+7. [Security Best Practices](#security-best-practices)
+8. [Common Patterns and Examples](#common-patterns-and-examples)
+9. [Debugging and Troubleshooting](#debugging-and-troubleshooting)
+10. [Integration with Off-Chain Code](#integration-with-off-chain-code)
+
+---
+
+## Introduction to Compact
+
+### What is Compact?
+
+**Compact** is Midnight's TypeScript-based domain-specific language (DSL) for writing privacy-preserving smart contracts. It combines familiar JavaScript/TypeScript syntax with zero-knowledge proof capabilities.
+
+**Key Characteristics**:
+- **TypeScript foundation**: Familiar syntax for JS/TS developers
+- **Privacy-first**: Native support for public and private data with ZK proofs
+- **Circuit-based**: Contracts defined as circuits running on-chain and off-chain
+- **Statically typed**: Enforces strict control over inputs, transitions, and state
+- **Restricted subset**: Some TypeScript features intentionally omitted for security
+
+**Fundamental Difference from Cardano/Aiken**:
+```typescript
+// Compact (Midnight) - Dual state model
+ledger {  // Public on-chain state
+    totalSupply: Unsigned64;
+}
+
+witness {  // Private off-chain state
+    userBalance: Unsigned64;  // Never exposed on-chain
+}
+
+// Aiken (Cardano) - Single public state model
+type Datum {
+    total_supply: Int,  // All state is public on-chain
+}
+```
+
+### Language Philosophy
+
+**Design Principles**:
+1. **Privacy by default**: Private data stays on user's machine
+2. **Verifiable computation**: ZK proofs validate without exposing data
+3. **Selective disclosure**: Programmable control over what becomes public
+4. **Regulatory compliance**: Built-in support for auditability
+
+**Comparison to Other Smart Contract Languages**:
+
+| Language | Paradigm | Privacy Model | Learning Curve |
+|----------|----------|---------------|----------------|
+| **Compact** | Imperative (TS-like) | ZK proofs, dual state | Moderate (TS familiar) |
+| **Aiken** | Functional (Rust-like) | Fully transparent | Moderate (new syntax) |
+| **Plutus** | Functional (Haskell) | Fully transparent | Steep (functional) |
+| **Solidity** | Imperative (OOP) | Fully transparent | Easy (JS-like) |
+| **Noir** | Rust-like DSL | ZK proofs | Moderate (Rust familiar) |
+
+---
+
+## Core Language Concepts
+
+### Basic Syntax and Structure
+
+**Minimal Contract Template**:
+
+```compact
+include "std";
+
+ledger {
+    // Public state visible on blockchain
+    count: Unsigned64;
+}
+
+// Circuit = function that can be executed
+export circuit increment(): Void {
+    ledger.count = ledger.count + 1;
+}
+```
+
+**Key Components**:
+- `include "std"`: Import standard library
+- `ledger`: Public state stored on-chain
+- `witness`: Private state stored locally (off-chain)
+- `circuit`: Function/operation that can be executed
+- `export`: Make circuit publicly callable
+
+### Include Statements
+
+```compact
+// Standard library (always include)
+include "std";
+
+// Optional imports for specific functionality
+include "hash";      // Cryptographic hashing
+include "signatures"; // Digital signature verification
+include "tokens";    // Token operations
+```
+
+### State Declarations
+
+**Ledger (Public State)**:
+```compact
+ledger {
+    // Visible on Midnight blockchain
+    totalSupply: Unsigned64;
+    owner: Address;
+    isActive: Boolean;
+    balances: Map<Address, Unsigned64>;
+}
+```
+
+**Witness (Private State)**:
+```compact
+witness {
+    // Stored locally on user's machine
+    secretKey: Bytes;
+    userBalance: Unsigned64;
+    privateData: String;
+    // NEVER exposed on-chain
+}
+```
+
+**Critical Rule**: Private data in `witness` NEVER appears on blockchain. ZK proofs verify computations without revealing witness values.
+
+### Circuit Definitions
+
+**Circuit Syntax**:
+```compact
+// Public circuit (callable by anyone)
+export circuit myFunction(param1: Type1, param2: Type2): ReturnType {
+    // Circuit logic
+    return value;
+}
+
+// Private circuit (internal use only)
+circuit privateHelper(input: Type): Type {
+    // Helper logic
+    return result;
+}
+```
+
+**Circuit Types**:
+1. **Transition circuits**: Modify ledger state
+2. **Query circuits**: Read state without modification
+3. **Pure circuits**: Compute without accessing state
+
+**Example - State Transition**:
+```compact
+export circuit transfer(to: Address, amount: Unsigned64): Void {
+    // Verify sender has sufficient balance (private)
+    assert(witness.userBalance >= amount);
+    
+    // Update public ledger
+    ledger.balances[to] = ledger.balances[to] + amount;
+    
+    // Update private witness
+    witness.userBalance = witness.userBalance - amount;
+}
+```
+
+---
+
+## Smart Contract Architecture
+
+### Dual-State Model (Kachina Protocol)
+
+**Architecture Overview**:
+```
+┌─────────────────────────────────────┐
+│         User's Machine              │
+│  ┌─────────────────────────────┐   │
+│  │  Private Witness State      │   │
+│  │  - User balance             │   │
+│  │  - Secret keys              │   │
+│  │  - Sensitive data           │   │
+│  └─────────────────────────────┘   │
+│              ↓                      │
+│  ┌─────────────────────────────┐   │
+│  │  ZK Proof Generator         │   │
+│  │  (Halo2 Proving System)     │   │
+│  └─────────────────────────────┘   │
+└─────────────────────────────────────┘
+                ↓ (Only proof sent)
+┌─────────────────────────────────────┐
+│      Midnight Blockchain            │
+│  ┌─────────────────────────────┐   │
+│  │  Public Ledger State        │   │
+│  │  - Total supply             │   │
+│  │  - ZK proofs                │   │
+│  │  - Public commitments       │   │
+│  └─────────────────────────────┘   │
+└─────────────────────────────────────┘
+```
+
+**Execution Flow**:
+1. User initiates transaction with private inputs on local machine
+2. Local proof server creates ZK proof confirming validity
+3. Proof + public data submitted to blockchain
+4. Smart contract verifies proof and updates ledger state
+5. User's private witness state updated locally
+
+### Contract Lifecycle
+
+**Development Workflow**:
+
+1. **Design Phase**:
+   - Define what data is public vs. private
+   - Design state transitions
+   - Identify ZK proof requirements
+
+2. **Implementation Phase**:
+   ```compact
+   // Define types
+   ledger { /* public state */ }
+   witness { /* private state */ }
+   
+   // Implement circuits
+   export circuit operation(): Void { /* logic */ }
+   ```
+
+3. **Compilation Phase**:
+   ```bash
+   compactc contract.compact
+   # Generates:
+   # - contract/ (TypeScript API)
+   # - zkir/ (ZK intermediate representation)
+   # - keys/ (prover/verifier keys)
+   ```
+
+4. **Deployment Phase**:
+   ```bash
+   midnight-cli deploy \
+     --contract contract.json \
+     --wallet <address> \
+     --network testnet
+   ```
+
+5. **Execution Phase**:
+   - Off-chain: Generate proofs locally
+   - On-chain: Submit proofs for verification
+   - Update both ledger and witness states
+
+### Comparison: Compact vs. Aiken vs. Solidity
+
+**State Management**:
+
+```compact
+// COMPACT (Midnight) - Dual State
+ledger {
+    publicBalance: Unsigned64;  // On-chain
+}
+
+witness {
+    privateBalance: Unsigned64;  // Off-chain
+}
+
+export circuit withdraw(amount: Unsigned64): Void {
+    // Private check (ZK proof)
+    assert(witness.privateBalance >= amount);
+    
+    // Public update
+    ledger.publicBalance = ledger.publicBalance - amount;
+    
+    // Private update (local only)
+    witness.privateBalance = witness.privateBalance - amount;
+}
+```
+
+```aiken
+// AIKEN (Cardano) - Single Public State
+type Datum {
+  balance: Int,  // All public on-chain
+}
+
+validator withdraw {
+  fn spend(datum: Option<Datum>, redeemer: Int, ..) -> Bool {
+    expect Some(d) = datum
+    d.balance >= redeemer  // Fully transparent validation
+  }
+}
+```
+
+```solidity
+// SOLIDITY (Ethereum) - Global Public State
+contract Token {
+    mapping(address => uint256) public balances;  // All public
+    
+    function withdraw(uint256 amount) public {
+        require(balances[msg.sender] >= amount);
+        balances[msg.sender] -= amount;
+    }
+}
+```
+
+---
+
+## Type System and Data Structures
+
+### Primitive Types
+
+**Numeric Types**:
+```compact
+ledger {
+    // Unsigned integers (various sizes)
+    count8: Unsigned8;     // 0 to 255
+    count16: Unsigned16;   // 0 to 65,535
+    count32: Unsigned32;   // 0 to 4,294,967,295
+    count64: Unsigned64;   // 0 to 18,446,744,073,709,551,615
+    
+    // Signed integers
+    balance32: Signed32;
+    balance64: Signed64;
+    
+    // Field elements (for cryptographic operations)
+    commitment: Field;
+}
+```
+
+**Boolean and Bytes**:
+```compact
+ledger {
+    isActive: Boolean;     // true or false
+    hash: Bytes;           // Byte arrays for hashes, keys
+    name: String;          // UTF-8 strings
+}
+```
+
+### Complex Types
+
+**Addresses**:
+```compact
+ledger {
+    owner: Address;        // Midnight blockchain address
+    recipient: Address;
+}
+
+export circuit setOwner(newOwner: Address): Void {
+    ledger.owner = newOwner;
+}
+```
+
+**Maps (Key-Value Storage)**:
+```compact
+ledger {
+    // Map from Address to balance
+    balances: Map<Address, Unsigned64>;
+    
+    // Nested maps
+    allowances: Map<Address, Map<Address, Unsigned64>>;
+}
+
+export circuit updateBalance(addr: Address, amount: Unsigned64): Void {
+    ledger.balances[addr] = amount;
+}
+```
+
+**Arrays and Lists**:
+```compact
+ledger {
+    // Fixed-size array
+    topScores: Array<Unsigned64, 10>;
+    
+    // Dynamic list (use with caution - size limits)
+    participants: List<Address>;
+}
+
+export circuit addParticipant(addr: Address): Void {
+    ledger.participants = ledger.participants.push(addr);
+}
+```
+
+**⚠️ Warning**: Dynamic lists can grow unbounded. Always enforce size limits in production:
+
+```compact
+export circuit addParticipant(addr: Address): Void {
+    assert(ledger.participants.length() < 1000);  // Enforce limit
+    ledger.participants = ledger.participants.push(addr);
+}
+```
+
+### Custom Types (Structs)
+
+```compact
+// Define custom type
+struct Token {
+    name: String;
+    symbol: String;
+    totalSupply: Unsigned64;
+    decimals: Unsigned8;
+}
+
+ledger {
+    tokenInfo: Token;
+    
+    // Map with custom type value
+    userTokens: Map<Address, Token>;
+}
+
+export circuit initializeToken(
+    name: String,
+    symbol: String,
+    supply: Unsigned64
+): Void {
+    ledger.tokenInfo = Token {
+        name: name,
+        symbol: symbol,
+        totalSupply: supply,
+        decimals: 18
+    };
+}
+```
+
+### Enums (Tagged Unions)
+
+```compact
+enum TokenType {
+    Fungible,
+    NonFungible,
+    SemiFungible
+}
+
+enum TransactionStatus {
+    Pending,
+    Confirmed,
+    Failed
+}
+
+ledger {
+    tokenType: TokenType;
+    txStatus: TransactionStatus;
+}
+
+export circuit setTokenType(type: TokenType): Void {
+    ledger.tokenType = type;
+}
+```
+
+---
+
+## Circuit Design Patterns
+
+### Pattern 1: Simple State Transition
+
+**Use Case**: Counter, basic state updates
+
+```compact
+include "std";
+
+ledger {
+    count: Unsigned64;
+}
+
+export circuit increment(): Void {
+    ledger.count = ledger.count + 1;
+}
+
+export circuit decrement(): Void {
+    assert(ledger.count > 0);  // Prevent underflow
+    ledger.count = ledger.count - 1;
+}
+
+export circuit reset(): Void {
+    ledger.count = 0;
+}
+```
+
+### Pattern 2: Access Control
+
+**Use Case**: Owner-only operations
+
+```compact
+include "std";
+
+ledger {
+    owner: Address;
+    value: Unsigned64;
+}
+
+// Helper circuit to check ownership
+circuit isOwner(caller: Address): Boolean {
+    return caller == ledger.owner;
+}
+
+export circuit setValue(caller: Address, newValue: Unsigned64): Void {
+    // Require ownership
+    assert(isOwner(caller));
+    
+    ledger.value = newValue;
+}
+
+export circuit transferOwnership(
+    caller: Address,
+    newOwner: Address
+): Void {
+    assert(isOwner(caller));
+    ledger.owner = newOwner;
+}
+```
+
+### Pattern 3: Multi-Party State Machine
+
+**Use Case**: Escrow, voting, multi-sig
+
+```compact
+include "std";
+
+enum EscrowState {
+    Active,
+    Completed,
+    Cancelled
+}
+
+ledger {
+    buyer: Address;
+    seller: Address;
+    arbiter: Address;
+    amount: Unsigned64;
+    state: EscrowState;
+}
+
+export circuit complete(caller: Address): Void {
+    // Only buyer or arbiter can complete
+    assert(caller == ledger.buyer || caller == ledger.arbiter);
+    assert(ledger.state == EscrowState.Active);
+    
+    ledger.state = EscrowState.Completed;
+    // Transfer amount to seller (simplified)
+}
+
+export circuit cancel(caller: Address): Void {
+    // Only seller or arbiter can cancel
+    assert(caller == ledger.seller || caller == ledger.arbiter);
+    assert(ledger.state == EscrowState.Active);
+    
+    ledger.state = EscrowState.Cancelled;
+    // Refund buyer (simplified)
+}
+```
+
+### Pattern 4: Token Transfer with Allowances
+
+**Use Case**: ERC20-like functionality
+
+```compact
+include "std";
+
+ledger {
+    totalSupply: Unsigned64;
+    balances: Map<Address, Unsigned64>;
+    allowances: Map<Address, Map<Address, Unsigned64>>;
+}
+
+export circuit transfer(
+    from: Address,
+    to: Address,
+    amount: Unsigned64
+): Void {
+    // Check sufficient balance
+    assert(ledger.balances[from] >= amount);
+    
+    // Update balances
+    ledger.balances[from] = ledger.balances[from] - amount;
+    ledger.balances[to] = ledger.balances[to] + amount;
+}
+
+export circuit approve(
+    owner: Address,
+    spender: Address,
+    amount: Unsigned64
+): Void {
+    ledger.allowances[owner][spender] = amount;
+}
+
+export circuit transferFrom(
+    spender: Address,
+    from: Address,
+    to: Address,
+    amount: Unsigned64
+): Void {
+    // Check allowance
+    assert(ledger.allowances[from][spender] >= amount);
+    assert(ledger.balances[from] >= amount);
+    
+    // Update allowance and balances
+    ledger.allowances[from][spender] = 
+        ledger.allowances[from][spender] - amount;
+    ledger.balances[from] = ledger.balances[from] - amount;
+    ledger.balances[to] = ledger.balances[to] + amount;
+}
+```
+
+---
+
+## Privacy and ZK Proof Patterns
+
+### Pattern 1: Private Balance with Public Total
+
+**Use Case**: Privacy-preserving token transfers
+
+```compact
+include "std";
+
+ledger {
+    // Public: total supply visible
+    totalSupply: Unsigned64;
+    
+    // Public: commitments to balances (hashes)
+    balanceCommitments: Map<Address, Bytes>;
+}
+
+witness {
+    // Private: actual user balance
+    userBalance: Unsigned64;
+    
+    // Private: randomness for commitment
+    balanceBlinding: Field;
+}
+
+export circuit transfer(
+    to: Address,
+    amount: Unsigned64
+): Void {
+    // Verify sender has sufficient private balance
+    assert(witness.userBalance >= amount);
+    
+    // Update private balance
+    witness.userBalance = witness.userBalance - amount;
+    
+    // Generate new commitment with ZK proof
+    // (Proof verifies: new_commitment = hash(new_balance, new_randomness))
+    // Without revealing balance or randomness
+    
+    // Update public commitment
+    ledger.balanceCommitments[getSender()] = generateCommitment(
+        witness.userBalance,
+        witness.balanceBlinding
+    );
+}
+```
+
+### Pattern 2: Age Verification (Selective Disclosure)
+
+**Use Case**: Prove age >18 without revealing exact age
+
+```compact
+include "std";
+
+witness {
+    birthYear: Unsigned32;  // Private: exact birth year
+}
+
+ledger {
+    verifiedUsers: Map<Address, Boolean>;
+}
+
+export circuit verifyAge(user: Address, currentYear: Unsigned32): Void {
+    // Calculate age privately
+    let age: Unsigned32 = currentYear - witness.birthYear;
+    
+    // Verify age >= 18 with ZK proof
+    assert(age >= 18);
+    
+    // Update public verification status
+    ledger.verifiedUsers[user] = true;
+    
+    // ZK proof confirms: user is >= 18
+    // WITHOUT revealing exact birthYear or age
+}
+```
+
+### Pattern 3: Private Voting
+
+**Use Case**: Confidential ballot with public results
+
+```compact
+include "std";
+
+enum VoteChoice {
+    Yes,
+    No,
+    Abstain
+}
+
+ledger {
+    // Public: vote counts
+    yesVotes: Unsigned64;
+    noVotes: Unsigned64;
+    abstainVotes: Unsigned64;
+    
+    // Public: who has voted (prevent double voting)
+    hasVoted: Map<Address, Boolean>;
+}
+
+witness {
+    // Private: user's actual vote
+    userVote: VoteChoice;
+}
+
+export circuit castVote(voter: Address): Void {
+    // Prevent double voting
+    assert(!ledger.hasVoted[voter]);
+    
+    // Update public vote count based on private choice
+    match witness.userVote {
+        VoteChoice.Yes => {
+            ledger.yesVotes = ledger.yesVotes + 1;
+        },
+        VoteChoice.No => {
+            ledger.noVotes = ledger.noVotes + 1;
+        },
+        VoteChoice.Abstain => {
+            ledger.abstainVotes = ledger.abstainVotes + 1;
+        }
+    }
+    
+    // Mark as voted publicly
+    ledger.hasVoted[voter] = true;
+    
+    // ZK proof: voter cast valid vote
+    // WITHOUT revealing which choice
+}
+```
+
+### Pattern 4: Nullifier Pattern (Prevent Double-Spending)
+
+**Use Case**: Anonymous credentials, one-time use tokens
+
+```compact
+include "std";
+include "hash";
+
+witness {
+    // Private: secret credential
+    secretKey: Bytes;
+    
+    // Private: unique identifier
+    serialNumber: Unsigned64;
+}
+
+ledger {
+    // Public: spent nullifiers (prevent reuse)
+    spentNullifiers: Map<Bytes, Boolean>;
+}
+
+export circuit spendCredential(): Void {
+    // Generate nullifier from private data
+    let nullifier: Bytes = hash(witness.secretKey, witness.serialNumber);
+    
+    // Verify not already spent
+    assert(!ledger.spentNullifiers[nullifier]);
+    
+    // Mark as spent
+    ledger.spentNullifiers[nullifier] = true;
+    
+    // ZK proof: valid credential spent
+    // WITHOUT revealing secretKey or serialNumber
+}
+```
+
+---
+
+## Security Best Practices
+
+### Critical Security Rules
+
+**1. Never Expose Private Data in Public State**
+
+```compact
+// ❌ WRONG: Private data in ledger
+ledger {
+    userSecretKey: Bytes;  // NEVER do this!
+}
+
+// ✅ CORRECT: Private data in witness
+witness {
+    userSecretKey: Bytes;  // Safe - never on-chain
+}
+
+ledger {
+    publicKeyHash: Bytes;  // Only hash exposed
+}
+```
+
+**2. Always Validate Inputs**
+
+```compact
+export circuit transfer(to: Address, amount: Unsigned64): Void {
+    // ✅ Validate amount is positive
+    assert(amount > 0);
+    
+    // ✅ Validate sufficient balance
+    assert(witness.userBalance >= amount);
+    
+    // ✅ Validate recipient is not zero address
+    assert(to != Address.zero());
+    
+    // Proceed with transfer
+    witness.userBalance = witness.userBalance - amount;
+}
+```
+
+**3. Prevent Arithmetic Overflow/Underflow**
+
+```compact
+export circuit add(a: Unsigned64, b: Unsigned64): Unsigned64 {
+    // ✅ Check for overflow
+    assert(a <= Unsigned64.max() - b);
+    
+    return a + b;
+}
+
+export circuit subtract(a: Unsigned64, b: Unsigned64): Unsigned64 {
+    // ✅ Check for underflow
+    assert(a >= b);
+    
+    return a - b;
+}
+```
+
+**4. Enforce Collection Size Limits**
+
+```compact
+ledger {
+    participants: List<Address>;
+}
+
+export circuit addParticipant(addr: Address): Void {
+    // ✅ Enforce maximum size
+    assert(ledger.participants.length() < 1000);
+    
+    ledger.participants = ledger.participants.push(addr);
+}
+```
+
+**5. Protect Against Reentrancy**
+
+```compact
+ledger {
+    locked: Boolean;
+}
+
+export circuit criticalOperation(): Void {
+    // ✅ Check not already executing
+    assert(!ledger.locked);
+    
+    // Lock during execution
+    ledger.locked = true;
+    
+    // Perform operation
+    // ...
+    
+    // Unlock after completion
+    ledger.locked = false;
+}
+```
+
+### Common Vulnerabilities and Mitigations
+
+**Vulnerability 1: Private Data Leakage**
+
+```compact
+// ❌ VULNERABLE: Leaks private data
+export circuit badTransfer(amount: Unsigned64): Void {
+    // This reveals exact balance on-chain!
+    ledger.publicBalance = witness.userBalance - amount;
+}
+
+// ✅ SECURE: Use commitments
+export circuit goodTransfer(amount: Unsigned64): Void {
+    assert(witness.userBalance >= amount);
+    witness.userBalance = witness.userBalance - amount;
+    
+    // Only update commitment, not actual value
+    ledger.balanceCommitment = hash(witness.userBalance);
+}
+```
+
+**Vulnerability 2: Insufficient Access Control**
+
+```compact
+// ❌ VULNERABLE: Anyone can withdraw
+export circuit badWithdraw(amount: Unsigned64): Void {
+    ledger.balance = ledger.balance - amount;
+}
+
+// ✅ SECURE: Verify ownership
+export circuit goodWithdraw(caller: Address, amount: Unsigned64): Void {
+    assert(caller == ledger.owner);
+    assert(ledger.balance >= amount);
+    ledger.balance = ledger.balance - amount;
+}
+```
+
+**Vulnerability 3: Unchecked State Transitions**
+
+```compact
+enum State { Pending, Active, Completed }
+
+ledger { state: State; }
+
+// ❌ VULNERABLE: Invalid transitions possible
+export circuit badComplete(): Void {
+    ledger.state = State.Completed;  // Can skip Active!
+}
+
+// ✅ SECURE: Validate transitions
+export circuit goodComplete(): Void {
+    assert(ledger.state == State.Active);  // Must be Active first
+    ledger.state = State.Completed;
+}
+```
+
+### Security Checklist
+
+**Before Deployment**:
+
+- [ ] All private data in `witness`, not `ledger`
+- [ ] All inputs validated with `assert()`
+- [ ] Arithmetic operations checked for overflow/underflow
+- [ ] Collection sizes bounded
+- [ ] Access control enforced for privileged operations
+- [ ] State transitions validated
+- [ ] No hardcoded secrets or keys
+- [ ] ZK proofs verify without revealing sensitive data
+- [ ] Test coverage includes edge cases and attack scenarios
+- [ ] Security audit completed (for high-value contracts)
+
+---
+
+## Common Patterns and Examples
+
+### Example 1: Simple Token Contract
+
+```compact
+include "std";
+
+struct TokenInfo {
+    name: String;
+    symbol: String;
+    decimals: Unsigned8;
+}
+
+ledger {
+    info: TokenInfo;
+    totalSupply: Unsigned64;
+    balances: Map<Address, Unsigned64>;
+}
+
+export circuit initialize(
+    name: String,
+    symbol: String,
+    supply: Unsigned64
+): Void {
+    ledger.info = TokenInfo {
+        name: name,
+        symbol: symbol,
+        decimals: 18
+    };
+    ledger.totalSupply = supply;
+}
+
+export circuit mint(to: Address, amount: Unsigned64): Void {
+    ledger.balances[to] = ledger.balances[to] + amount;
+    ledger.totalSupply = ledger.totalSupply + amount;
+}
+
+export circuit transfer(
+    from: Address,
+    to: Address,
+    amount: Unsigned64
+): Void {
+    assert(ledger.balances[from] >= amount);
+    
+    ledger.balances[from] = ledger.balances[from] - amount;
+    ledger.balances[to] = ledger.balances[to] + amount;
+}
+
+export circuit burn(from: Address, amount: Unsigned64): Void {
+    assert(ledger.balances[from] >= amount);
+    
+    ledger.balances[from] = ledger.balances[from] - amount;
+    ledger.totalSupply = ledger.totalSupply - amount;
+}
+```
+
+### Example 2: Private Auction
+
+```compact
+include "std";
+
+enum AuctionState {
+    Open,
+    Closed,
+    Finalized
+}
+
+ledger {
+    state: AuctionState;
+    seller: Address;
+    highestBidCommitment: Bytes;  // Hash of highest bid
+    winner: Address;
+}
+
+witness {
+    userBid: Unsigned64;  // Private bid amount
+}
+
+export circuit placeBid(bidder: Address): Void {
+    assert(ledger.state == AuctionState.Open);
+    
+    // Generate commitment to bid (hash of bid + randomness)
+    let commitment: Bytes = hash(witness.userBid);
+    
+    // Compare privately with current highest
+    // ZK proof: my bid > current highest
+    // WITHOUT revealing amounts
+    
+    // Update public commitment if higher
+    ledger.highestBidCommitment = commitment;
+    ledger.winner = bidder;
+}
+
+export circuit closeAuction(): Void {
+    assert(ledger.state == AuctionState.Open);
+    ledger.state = AuctionState.Closed;
+}
+
+export circuit finalizeAuction(): Void {
+    assert(ledger.state == AuctionState.Closed);
+    
+    // Winner reveals bid with ZK proof of correctness
+    // Transfer item to winner
+    // Transfer payment to seller
+    
+    ledger.state = AuctionState.Finalized;
+}
+```
+
+### Example 3: Multi-Sig Wallet
+
+```compact
+include "std";
+
+ledger {
+    owners: List<Address>;
+    threshold: Unsigned8;  // Required signatures
+    nonce: Unsigned64;
+    pendingTransactions: Map<Unsigned64, Transaction>;
+    approvals: Map<Unsigned64, List<Address>>;
+}
+
+struct Transaction {
+    to: Address;
+    amount: Unsigned64;
+    executed: Boolean;
+}
+
+export circuit propose(
+    proposer: Address,
+    to: Address,
+    amount: Unsigned64
+): Unsigned64 {
+    // Verify proposer is owner
+    assert(ledger.owners.contains(proposer));
+    
+    let txId: Unsigned64 = ledger.nonce;
+    ledger.nonce = ledger.nonce + 1;
+    
+    ledger.pendingTransactions[txId] = Transaction {
+        to: to,
+        amount: amount,
+        executed: false
+    };
+    
+    // Auto-approve by proposer
+    ledger.approvals[txId] = List::new().push(proposer);
+    
+    return txId;
+}
+
+export circuit approve(approver: Address, txId: Unsigned64): Void {
+    assert(ledger.owners.contains(approver));
+    assert(!ledger.pendingTransactions[txId].executed);
+    assert(!ledger.approvals[txId].contains(approver));
+    
+    ledger.approvals[txId] = ledger.approvals[txId].push(approver);
+}
+
+export circuit execute(txId: Unsigned64): Void {
+    let tx: Transaction = ledger.pendingTransactions[txId];
+    assert(!tx.executed);
+    
+    // Verify threshold met
+    assert(ledger.approvals[txId].length() >= ledger.threshold);
+    
+    // Execute transaction
+    // (transfer logic here)
+    
+    // Mark executed
+    tx.executed = true;
+    ledger.pendingTransactions[txId] = tx;
+}
+```
+
+---
+
+## Debugging and Troubleshooting
+
+### Common Compilation Errors
+
+**Error 1: Type Mismatch**
+
+```compact
+// ❌ ERROR: Expected Unsigned64, got Unsigned32
+ledger {
+    count: Unsigned64;
+}
+
+export circuit set(value: Unsigned32): Void {
+    ledger.count = value;  // Type mismatch!
+}
+
+// ✅ FIX: Explicit type conversion
+export circuit set(value: Unsigned32): Void {
+    ledger.count = Unsigned64::from(value);
+}
+```
+
+**Error 2: Undefined Variable**
+
+```compact
+// ❌ ERROR: 'balance' not found in ledger
+export circuit withdraw(amount: Unsigned64): Void {
+    ledger.balance = ledger.balance - amount;  // Not declared!
+}
+
+// ✅ FIX: Declare in ledger first
+ledger {
+    balance: Unsigned64;
+}
+
+export circuit withdraw(amount: Unsigned64): Void {
+    ledger.balance = ledger.balance - amount;
+}
+```
+
+**Error 3: Invalid State Access**
+
+```compact
+// ❌ ERROR: Cannot access witness in exported circuit directly
+export circuit bad(): Unsigned64 {
+    return witness.secretValue;  // Exposes private data!
+}
+
+// ✅ FIX: Use ZK proof pattern
+export circuit good(): Bytes {
+    // Return commitment/hash instead
+    return hash(witness.secretValue);
+}
+```
+
+### Runtime Debugging
+
+**Assertion Failures**:
+
+```compact
+export circuit transfer(amount: Unsigned64): Void {
+    // Add descriptive assertions for debugging
+    assert(amount > 0, "Amount must be positive");
+    assert(witness.balance >= amount, "Insufficient balance");
+    
+    witness.balance = witness.balance - amount;
+}
+```
+
+**Proof Generation Failures**:
+
+```compact
+// Common cause: Constraint system too complex
+// Solution: Simplify circuit or break into smaller circuits
+
+// Instead of:
+export circuit complex(): Void {
+    // 1000+ lines of logic
+}
+
+// Split into:
+circuit helper1(): Void { /* ... */ }
+circuit helper2(): Void { /* ... */ }
+
+export circuit simple(): Void {
+    helper1();
+    helper2();
+}
+```
+
+### Testing Strategies
+
+**Unit Testing Pattern**:
+
+```typescript
+// Off-chain test file (TypeScript)
+import { Contract } from './contract';
+
+describe('Token Contract', () => {
+    it('should transfer tokens correctly', async () => {
+        const contract = await Contract.deploy();
+        
+        // Initialize
+        await contract.initialize('MyToken', 'MTK', 1000000);
+        
+        // Transfer
+        await contract.transfer(alice, bob, 100);
+        
+        // Verify balances
+        expect(await contract.balances(bob)).toBe(100);
+    });
+    
+    it('should reject insufficient balance', async () => {
+        const contract = await Contract.deploy();
+        
+        await expect(
+            contract.transfer(alice, bob, 1000000)
+        ).rejects.toThrow('Insufficient balance');
+    });
+});
+```
+
+**Integration Testing on Testnet**:
+
+```bash
+# Deploy to testnet
+midnight-cli deploy --network testnet --contract token.json
+
+# Test with real transactions
+midnight-cli call --circuit transfer \
+  --args '{"from":"addr1...","to":"addr2...","amount":100}'
+
+# Verify state
+midnight-cli query --circuit balances --args '{"addr":"addr2..."}'
+```
+
+---
+
+## Integration with Off-Chain Code
+
+### Generated TypeScript API
+
+**Contract Compilation Output**:
+
+```bash
+compactc token.compact
+# Generates:
+# - contract/token.ts          (TypeScript API)
+# - zkir/token.zkir            (ZK circuit)
+# - keys/token.pk              (Prover key)
+# - keys/token.vk              (Verifier key)
+```
+
+**Using Generated API**:
+
+```typescript
+// Import generated contract
+import { TokenContract, TokenLedger, TokenWitness } from './contract/token';
+
+// Initialize contract
+const contract = new TokenContract({
+    network: 'testnet',
+    proverServerUrl: 'http://localhost:6300'
+});
+
+// Call circuit (generates ZK proof locally)
+const tx = await contract.transfer({
+    from: aliceAddress,
+    to: bobAddress,
+    amount: 100n
+});
+
+// Submit transaction
+const txHash = await tx.submit();
+
+// Wait for confirmation
+await tx.wait();
+
+// Query ledger state
+const bobBalance = await contract.ledger.balances(bobAddress);
+console.log(`Bob's balance: ${bobBalance}`);
+```
+
+### Wallet Integration
+
+**Midnight Lace Wallet Integration**:
+
+```typescript
+import { MidnightProvider } from '@midnight-ntwrk/wallet';
+
+// Connect to wallet
+const provider = new MidnightProvider();
+await provider.enable();
+
+// Get wallet address
+const address = await provider.getAddress();
+
+// Sign and submit transaction
+const tx = await contract.transfer({
+    from: address,
+    to: recipientAddress,
+    amount: 50n
+});
+
+const signedTx = await provider.signTransaction(tx);
+const txHash = await provider.submitTransaction(signedTx);
+```
+
+### React Integration Example
+
+```tsx
+import { useState, useEffect } from 'react';
+import { TokenContract } from './contract/token';
+
+function TokenApp() {
+    const [contract, setContract] = useState<TokenContract | null>(null);
+    const [balance, setBalance] = useState<bigint>(0n);
+    
+    useEffect(() => {
+        async function init() {
+            const c = new TokenContract({ network: 'testnet' });
+            setContract(c);
+            
+            // Subscribe to balance updates
+            c.ledger.balances.subscribe(userAddress, (newBalance) => {
+                setBalance(newBalance);
+            });
+        }
+        init();
+    }, []);
+    
+    async function handleTransfer(to: string, amount: bigint) {
+        if (!contract) return;
+        
+        try {
+            const tx = await contract.transfer({
+                from: userAddress,
+                to,
+                amount
+            });
+            
+            await tx.submit();
+            await tx.wait();
+            
+            alert('Transfer successful!');
+        } catch (error) {
+            alert(`Transfer failed: ${error.message}`);
+        }
+    }
+    
+    return (
+        <div>
+            <h1>Your Balance: {balance.toString()}</h1>
+            <button onClick={() => handleTransfer('addr...', 10n)}>
+                Send 10 Tokens
+            </button>
+        </div>
+    );
+}
+```
+
+---
+
+## Quick Reference
+
+### Compact Syntax Cheat Sheet
+
+```compact
+// Comments
+// Single-line comment
+/* Multi-line
+   comment */
+
+// State declarations
+ledger { publicVar: Type; }
+witness { privateVar: Type; }
+
+// Circuit definition
+export circuit name(param: Type): ReturnType {
+    // Circuit body
+}
+
+// Control flow
+if (condition) {
+    // true branch
+} else {
+    // false branch
+}
+
+match value {
+    Pattern1 => { /* ... */ },
+    Pattern2 => { /* ... */ }
+}
+
+// Assertions
+assert(condition);
+assert(condition, "Error message");
+
+// Arithmetic
+let sum = a + b;
+let diff = a - b;
+let prod = a * b;
+let quot = a / b;
+let rem = a % b;
+
+// Comparisons
+a == b  // Equality
+a != b  // Inequality
+a < b   // Less than
+a > b   // Greater than
+a <= b  // Less or equal
+a >= b  // Greater or equal
+
+// Logical operators
+a && b  // AND
+a || b  // OR
+!a      // NOT
+
+// Collections
+map[key] = value;
+list.push(item);
+list.length();
+array[index];
+```
+
+### Common Type Conversions
+
+```compact
+// Unsigned conversions
+Unsigned64::from(value32);  // Unsigned32 -> Unsigned64
+Unsigned32::from(value16);  // Unsigned16 -> Unsigned32
+
+// To bytes
+Bytes::from(string);
+Bytes::from(address);
+
+// To field
+Field::from(unsigned64);
+```
+
+### Standard Library Functions
+
+```compact
+// Hash functions
+hash(value);                    // SHA-256
+hash(value1, value2);          // Hash multiple values
+
+// Signature verification
+verify_signature(message, signature, publicKey);
+
+// Random number generation (witness only)
+random_field();                // Random field element
+```
+
+---
+
+## Additional Resources
+
+### Official Documentation
+- **Midnight Docs**: https://docs.midnight.network/
+- **Compact Reference**: https://docs.midnight.network/develop/reference/
+- **Tutorial**: https://docs.midnight.network/develop/tutorial/
+
+### Example Repositories
+- **SundaeSwap Examples**: https://github.com/SundaeSwap-finance/midnight-examples
+- **Official Examples**: https://releases.midnight.network/
+
+### Development Tools
+- **Compact Compiler**: Install from https://releases.midnight.network/
+- **VS Code Extension**: Syntax highlighting and live checking
+- **Proof Server**: Docker image `midnightnetwork/proof-server`
+
+### Community Resources
+- **Discord**: https://discord.com/invite/midnightnetwork
+- **Developer Forum**: https://forum.midnight.network/
+- **Mesh Midnight**: https://midnight.meshjs.dev/
+
+### Related Cardano Documents
+- **aiken-development-rules.md**: For comparison with Cardano mainchain development
+- **cardano-security-patterns.md**: Security principles applicable to both chains
+- **ethereum-cardano-comparison.md**: Understanding blockchain model differences
+
+---
+
+**Document Version**: 1.0
+**Last Updated**: 2025-10-05
+**Compact Version**: 0.2.0+
+**Status**: Active Development (Testnet-02)
+
+**For latest updates**: Always check official documentation at https://docs.midnight.network/
+
+---
+
+## AI Assistant Guidelines
+
+**When helping with Compact development**:
+
+1. **Always distinguish public vs. private data**
+   - Use `ledger` for on-chain public state
+   - Use `witness` for off-chain private state
+   - Never expose sensitive data in ledger
+
+2. **Enforce security best practices**
+   - Validate all inputs with `assert()`
+   - Check arithmetic overflow/underflow
+   - Limit collection sizes
+   - Verify access control
+
+3. **Understand ZK proof implications**
+   - Private data generates proofs, not exposed on-chain
+   - Proofs verify correctness without revealing values
+   - Design circuits for efficient proof generation
+
+4. **Reference this guide for**
+   - Syntax questions → Quick Reference section
+   - Design patterns → Circuit Design Patterns section
+   - Security issues → Security Best Practices section
+   - Common errors → Debugging and Troubleshooting section
+
+5. **Compare with Cardano when relevant**
+   - Midnight: Dual state (public + private)
+   - Cardano: Single public state
+   - Both: Deterministic validation
+   - Different: Privacy models, proof systems
+
+6. **Stay updated**
+   - Compact is evolving (currently 0.2.0)
+   - Check official docs for latest features
+   - Testnet features may change before mainnet
+   - Security best practices apply regardless of version
